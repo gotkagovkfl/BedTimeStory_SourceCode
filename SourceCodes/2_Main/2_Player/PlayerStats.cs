@@ -1,3 +1,12 @@
+/*
+
+최초 작업자는 본인이 아님
+PlayerController와 신기능들을 추가하면서, 
+OnUpdate, GetMovementSpeed, CanRun, UpdateStamina 함수와, 관련 변수 및 UnityEvents 등을 추가함.
+
+*/
+
+
 using System.Collections;
 using System.Collections.Generic;
 using GameUtil;
