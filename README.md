@@ -1,7 +1,7 @@
 # BedTimeStory
 ### GameMakers 9기 게임잼 프로젝트 디벨롭
 ### 개발 기간 : 2024.11.09. ~ 2024.11.10 / 2025.01.19. ~ 2025.03.30.
-### 출시 일자 : 2024.04.14.  [[스팀상점링크]](https://store.steampowered.com/app/3555050/BedTimeStory/)
+### 출시 일자 : 2025.04.14.  [[스팀상점링크]](https://store.steampowered.com/app/3555050/BedTimeStory/)
 ----
 #### 제가 작성한 코드만 업로드 하였습니다.
 [[본 레포지토리 링크]](https://github.com/PakaDopa/BedTimeStory)
