@@ -6,6 +6,7 @@ using Cinemachine;
 using DG.Tweening;
 using TMPro;
 using System.Threading;
+using System;
 
 public enum PlayerLegState
 {
@@ -23,10 +24,15 @@ public enum PlayerBodyState
 
 public class PlayerController : MonoBehaviour
 {
+    // 하체 및 상체 상태
     public PlayerLegState legState;
     public PlayerBodyState bodyState;
-    
-    
+
+    // 상태 전환 이벤트
+    Dictionary<PlayerLegState, Action> onLegStateChangeAction;     
+    Dictionary<PlayerBodyState, Action> onBodyStateChangeAction;
+
+    // 플레이어 기능
     PlayerInputManager input;
     PlayerStats stats;
     PlayerCamera playerCamera;
@@ -34,7 +40,6 @@ public class PlayerController : MonoBehaviour
     PlayerAnimation animationController;
     Weapon weapon;
     
-
     //
     public float mouseSense_min => 0.01f;
     public float mouseSense_max => 2f;
@@ -71,6 +76,7 @@ public class PlayerController : MonoBehaviour
     {
         input = GetComponent<PlayerInputManager>();
         stats = GetComponent<PlayerStats>();
+        stats.Init();
         animationController  = GetComponent<PlayerAnimation>();
         animationController.Init();
         playerCamera = GetComponent<PlayerCamera>();
@@ -81,7 +87,20 @@ public class PlayerController : MonoBehaviour
         //
         mouseSense  = LocalDataManager.GetMouseSense();
 
-        ExitAimState(); 
+        //
+        onLegStateChangeAction=new()
+        {
+            { PlayerLegState.Idle,null},
+            { PlayerLegState.Walk,null},
+            { PlayerLegState.Run, OnEnterRunningState},
+        };
+        onBodyStateChangeAction = new()
+        {
+            { PlayerBodyState.Default,OnExitAimState},
+            { PlayerBodyState.Aim,OnEnterAimState},
+        };
+
+        UpdateState(); // 기본 상태 초기화
     }
 
     // 기능들을 현재 상태에 따라 업데이트한다. 
@@ -93,105 +112,63 @@ public class PlayerController : MonoBehaviour
         }
         
         // 플레이어 상태 설정
-        SetBodyState(); // 조준 상태
-        SetLegState();  // 인풋에 따라 하체 상태
+        UpdateState();
         
-        // 하위 기능 설정
-        RotateAndMove(legState,bodyState);  // 움직임 & 애니메이션 
-        ControlWeapon(bodyState);           // 무기
-        stats.OnUpdate(legState);           // 스탯
-        playerCamera.ControlCameraPosition(legState,bodyState); // 카메라
-    }
+        // parameters 
+        Vector2 moveVector = input.playerMoveVector;
+        float movementSpeed = stats.currMovementSpeed;
 
-    private void LateUpdate()
-    {
-        if(GamePlayManager.isGamePlaying == false)
-        {
-            return;
-        }
-        playerCamera.ControlCameraRotation( input.mouseMoveVector, mouseSense);
+        // 하위 기능 설정
+        RotateAndMove(legState,bodyState,moveVector,movementSpeed);  // 움직임
+        ControlWeapon(bodyState);           // 무기
+        stats.OnUpdate(legState,bodyState);  // 스탯
+        ControlCamera(legState,bodyState);   // 카메라
+        UpdateAnimation(legState,bodyState,moveVector,movementSpeed); // 애니메이션
     }
 
     //===========================================================================================================
-
-    // 다리 상태 ( 가만히, 걷기, 뛰기 )
-    void SetLegState()
+    // 입력에 따라 하체 및 상체 상태 설정
+    void UpdateState()
     {
-        // 입력이 있는 경우, 키를 입력한 방향으로 회전
+        // ========하체 상태 결정============
+        PlayerLegState nextLegState = PlayerLegState.Idle;
         if (input.playerMoveVector != Vector2.zero)
         {
             if (input.dash && stats.CanRun())
             {
-                legState = PlayerLegState.Run;
-                
-                //첫대쉬 판정
-                if (input.firstDash)
-                {
-                    SoundManager.Instance.Play(dashSoundSO,Player.Instance.T.position);
-                }
+                nextLegState = PlayerLegState.Run;
             }
             else
             {
-                legState = PlayerLegState.Walk;
+                nextLegState = PlayerLegState.Walk;
             }    
         }
-        // 입력이 없는 경우, 속도 0
-        else
+        // 상태 전환 및 전환 이벤트 실행
+        if ( legState != nextLegState )
         {
-            legState = PlayerLegState.Idle;
+            legState = nextLegState;
+            onLegStateChangeAction[legState]?.Invoke();
+        }
+
+        // =========상체 상태 설정===========
+        PlayerBodyState nextBodyState = input.aim? PlayerBodyState.Aim:PlayerBodyState.Default;
+        // 상태 전환 및 전환 이벤트 실행
+        if( bodyState != nextBodyState)
+        {
+            bodyState = nextBodyState;
+            onBodyStateChangeAction[bodyState]?.Invoke();
         }
     }
 
-    // 상체 상태 ( 기본, 조준 ) // 추후 사격도 추가할까 생각중
-    void SetBodyState()
+
+    // 회전, 이동 
+    private void RotateAndMove(PlayerLegState currLegState, PlayerBodyState currBodyState,
+                                                                Vector2 moveVector, float movementSpeed)
     {
-        // 입력이 있는 경우, 키를 입력한 방향으로 회전
-        if (input.aim)
-        {
-            bodyState = PlayerBodyState.Aim;
-            if(input.firstAim)
-            {
-                EnterAimState();
-            }
-        }
-        // 입력이 없는 경우, 속도 0
-        else
-        {
-            bodyState = PlayerBodyState.Default;
-            if (input.finishAim)
-            {
-                ExitAimState();
-            }
-        }
-
-        float animSpeed = stats.currMoveSpeedRatio;
-        animationController.OnSetBodyState(bodyState,animSpeed);
-    }
-
-    // 회전, 이동 - 애니메이션까지 
-    private void RotateAndMove(PlayerLegState currLegState, PlayerBodyState currBodyState)
-    {
-        Vector2 moveVector = input.playerMoveVector;
-
         // 회전 적용
         playerMove.Rotate(currLegState, currBodyState, moveVector, playerCamera.t_mainCam.eulerAngles.y);
-
-        //
-        float targetSpeed = stats.GetMovementSpeed(currLegState,currBodyState); // 다리 상태, 조준 상테에 따라 이동속도가 다름. 
-        playerMove.Move(currLegState, currBodyState, moveVector, targetSpeed );
-
-
-        // 애니메이션 (상태별로)
-        if( bodyState== PlayerBodyState.Default)
-        {
-            // Animation
-            animationController.OnMove_Default(targetSpeed);
-        }
-        else if(bodyState == PlayerBodyState.Aim)
-        {
-            Vector2 normalizedVector = moveVector.normalized;
-            animationController.OnMove_OnAim(normalizedVector);
-        }
+        // 이동
+        playerMove.Move(currLegState, currBodyState, moveVector, movementSpeed);
     }
 
 
@@ -205,24 +182,8 @@ public class PlayerController : MonoBehaviour
     }
 
 
-    #region ===Weapon===
-    // 조준 시작
-    void EnterAimState()
-    {
-        SoundManager.Instance.Play(aimSfx, Player.Instance.T.position); 
 
-        crossHairUI.SetActive(true);    
-        playerCamera.OnAim(true);
-    }
-
-    // 조준 해제
-    void ExitAimState()
-    {
-        crossHairUI.SetActive(false);
-        playerCamera.OnAim(false);
-    }
-
-    // 장전, 사격, 스킬 
+    // 사격, 스킬, 재장전
     void ControlWeapon(PlayerBodyState bodyState )
     {  
         bool isAiming = bodyState == PlayerBodyState.Aim;
@@ -230,25 +191,57 @@ public class PlayerController : MonoBehaviour
         bool toUseSkill = input.useSkill;
         bool toReload = input.reload;
 
-
+        // 일반 사격
         if( weapon.TryShoot(isAiming,toFire))
         {
             playerCamera.ApplyRecoil();  //
             PlaySFX_fire();
         }
-
+        // 유탄 발사
         if( weapon.TryUseSkill(isAiming,toUseSkill))
         {
             playerCamera.ApplyRecoil(1.5f);     // 사격보다 반동이 쏌
             SoundManager.Instance.Play(skillUseSfx, Player.Instance.T.position);   // 스킬 sfx
         }
-
+        // 재장전
         if( weapon.TryReload(isAiming,toReload,toFire))
         {
             SoundManager.Instance.Play(reloadEventSo, Player.Instance.T.position);  // 장전 sfx
         }
     }
-    #endregion
+
+    // 카메라 위치 설정 및 회전
+    void ControlCamera(PlayerLegState currLegState, PlayerBodyState currBodyState)
+    {
+        playerCamera.ControlCameraPosition(currLegState,currBodyState); 
+        playerCamera.ControlCameraRotation( input.mouseMoveVector, mouseSense);
+    }
+
+    // 애니메이션
+    void UpdateAnimation(PlayerLegState currLegState, PlayerBodyState currBodyState, 
+                                    Vector2 moveVector, float movementSpeed)
+    {
+        float animSpeed = stats.currMoveSpeedRatio;
+        animationController.OnSetBodyState(currBodyState,animSpeed);
+
+        // 애니메이션 (상태별로)
+        if( bodyState== PlayerBodyState.Default)
+        {
+            animationController.OnMove_Default(movementSpeed);
+        }
+        else if(bodyState == PlayerBodyState.Aim)
+        {
+            Vector2 normalizedVector = moveVector.normalized;
+            animationController.OnMove_OnAim(normalizedVector);
+        }
+    }
+
+
+
+
+
+
+
 
 
     // 발자국 소리 - 애니메이션 이벤트에 의해 자동으로 호출 
@@ -277,8 +270,6 @@ public class PlayerController : MonoBehaviour
 
 
 
-
-
     //========================================
     public void OnVictory()
     {
@@ -291,4 +282,32 @@ public class PlayerController : MonoBehaviour
         animationController.OnGameFinisehd();
     }
 
+
+
+
+    
+    #region ==== Events ====
+    //
+    void OnEnterRunningState()
+    {
+        SoundManager.Instance.Play(dashSoundSO,Player.Instance.T.position);
+    }
+
+
+    // 조준 시작
+    void OnEnterAimState()
+    {
+        SoundManager.Instance.Play(aimSfx, Player.Instance.T.position); 
+
+        crossHairUI.SetActive(true);    
+        playerCamera.OnAim(true);
+    }
+
+    // 조준 해제
+    void OnExitAimState()
+    {
+        crossHairUI.SetActive(false);
+        playerCamera.OnAim(false);
+    }
+    #endregion
 }
